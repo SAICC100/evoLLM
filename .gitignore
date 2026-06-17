@@ -1,0 +1,10 @@
+data/
+workspace/observations/
+workspace/gaps/
+workspace/staging/
+workspace/verdicts/
+workspace/proposals/
+core/core
+*.pyc
+__pycache__/
+.env

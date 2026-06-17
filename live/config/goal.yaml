@@ -1,0 +1,29 @@
+name: "真实的世界模拟"
+description: |
+  用户设定世界背景（种族、地点、社会结构），系统自动演绎一个有生命力的虚拟世界。
+  世界中的 NPC 有自己的生老病死，会产生社交、冲突、贸易等多样化事件。
+  每个 NPC 有姓名、职业、健康、金钱、年龄属性，世界有季节和时间流逝。
+
+version: "1.0"
+
+metrics:
+  - id: population_vitality
+    description: "人口有自然流动，每 30 轮内应有出生和死亡"
+    query: "SELECT COUNT(*) FROM events WHERE type IN ('death','birth') AND tick > {current_tick} - 30"
+    threshold: "> 3"
+    weight: 0.3
+
+  - id: event_diversity
+    description: "事件类型不应高度集中，每 10 轮应覆盖 5 种以上类型"
+    query: "SELECT COUNT(DISTINCT type) FROM events WHERE tick > {current_tick} - 10"
+    threshold: "> 5"
+    weight: 0.3
+
+  - id: npc_activity
+    description: "NPC 每轮都应该有行动记录"
+    query: "SELECT COUNT(*) FROM events WHERE tick = {current_tick}"
+    threshold: "> 0"
+    weight: 0.4
+
+scoring: weighted_average
+target_score: 0.8
