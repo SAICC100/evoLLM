@@ -7,15 +7,30 @@ import json
 import logging
 import os
 import re
-import time
 from pathlib import Path
 from typing import Any
 
-import requests
+from openai import OpenAI
+
+# 加载 .env（如果存在）
+_env_file = Path(__file__).parent.parent / ".env"
+if _env_file.exists():
+    for line in _env_file.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, _, v = line.partition("=")
+            os.environ.setdefault(k.strip(), v.strip())
 
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:7000")
-WORKSPACE = Path(os.getenv("WORKSPACE_DIR", "../workspace"))
-LIVE = Path(os.getenv("LIVE_DIR", "../live"))
+WORKSPACE = Path(os.getenv("WORKSPACE_DIR", str(Path(__file__).parent.parent / "workspace")))
+LIVE = Path(os.getenv("LIVE_DIR", str(Path(__file__).parent.parent / "live")))
+
+# 直连 LLM（不依赖 gateway 服务，保证 Bootstrapper 独立可运行）
+_llm_client = OpenAI(
+    api_key=os.getenv("LLM_API_KEY", "NONE"),
+    base_url=os.getenv("LLM_BASE_URL", "http://wbaigcproxy.search.weibo.com:9029/v1"),
+)
+_llm_model = os.getenv("LLM_MODEL_NAME", "deepseek-v3.2")
 
 logger = logging.getLogger("evolution")
 
@@ -24,20 +39,18 @@ class AgentBase:
     name: str = "base"
 
     def llm(self, messages: list[dict], temperature: float = 0.7,
-            max_tokens: int = 2000) -> str:
-        resp = requests.post(f"{GATEWAY_URL}/chat", json={
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "caller": self.name,
-        }, timeout=60)
-        resp.raise_for_status()
-        return resp.json()["content"]
+            max_tokens: int = 4000) -> str:
+        resp = _llm_client.chat.completions.create(
+            model=_llm_model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return resp.choices[0].message.content
 
     def llm_json(self, messages: list[dict], **kwargs) -> Any:
         """调用 LLM 并解析 JSON 输出，自动提取代码块。"""
         content = self.llm(messages, **kwargs)
-        # 提取 ```json ... ``` 或 [ ... ] 或 { ... }
         for pattern in [r"```json\s*(.*?)```", r"(\[.*\])", r"(\{.*\})"]:
             m = re.search(pattern, content, re.DOTALL)
             if m:
@@ -67,5 +80,7 @@ class AgentBase:
 
     def latest_observations(self, n: int = 10) -> list[dict]:
         obs_dir = WORKSPACE / "observations"
+        if not obs_dir.exists():
+            return []
         files = sorted(obs_dir.glob("tick_*.json"), reverse=True)[:n]
         return [self.read_json(f) for f in files]

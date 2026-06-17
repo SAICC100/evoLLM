@@ -1,0 +1,9 @@
+name: world_simulation_pipeline
+steps:
+  - plugin: world_initializer
+  - plugin: npc_lifecycle
+    after: world_initializer
+  - plugin: npc_daily_actions
+    after: npc_lifecycle
+  - plugin: tribe_events
+    after: npc_daily_actions

@@ -24,9 +24,9 @@ app = Flask(__name__)
 
 _client = OpenAI(
     api_key=os.getenv("LLM_API_KEY", "NONE"),
-    base_url=os.getenv("LLM_BASE_URL", "https://api.openai.com/v1"),
+    base_url=os.getenv("LLM_BASE_URL", "http://wbaigcproxy.search.weibo.com:9029/v1"),
 )
-DEFAULT_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+DEFAULT_MODEL = os.getenv("LLM_MODEL_NAME", "deepseek-v3.2")
 
 # ── 简单令牌桶限流 ───────────────────────────────────────────────────────────
 
