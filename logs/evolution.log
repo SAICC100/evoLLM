@@ -1,0 +1,7 @@
+2026-06-18 09:50:05,733 evo-scheduler INFO 进化层调度器启动（跳过积压模式，skip_ratio=10）
+2026-06-18 09:50:05,734 evo-scheduler INFO 跳过积压 5646 个 tick，直接处理最新 tick=5647
+2026-06-18 09:50:05,734 evo-scheduler INFO ── 处理 tick=5647 ──
+2026-06-18 09:50:10,632 httpx        INFO HTTP Request: POST http://wbaigcproxy.search.weibo.com:9029/v1/chat/completions "HTTP/1.1 200 OK"
+2026-06-18 09:50:10,642 observer     INFO Observer 完成 tick=5647, events={}
+2026-06-18 09:50:22,102 httpx        INFO HTTP Request: POST http://wbaigcproxy.search.weibo.com:9029/v1/chat/completions "HTTP/1.1 200 OK"
+2026-06-18 09:50:22,104 analyst      INFO Analyst 完成 tick=5647, score=1.0

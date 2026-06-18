@@ -23,12 +23,30 @@ type Trigger struct {
 }
 
 type Step struct {
-	Plugin      string   `yaml:"plugin"`
-	Description string   `yaml:"description"`
-	After       []string `yaml:"after"`
-	Condition   string   `yaml:"condition"`
-	TimeoutMs   int      `yaml:"timeout_ms"`
-	OnError     string   `yaml:"on_error"` // skip（默认）| stop
+	Plugin      string     `yaml:"plugin"`
+	Description string     `yaml:"description"`
+	After       StringList `yaml:"after"`
+	Condition   string     `yaml:"condition"`
+	TimeoutMs   int        `yaml:"timeout_ms"`
+	OnError     string     `yaml:"on_error"` // skip（默认）| stop
+}
+
+// StringList 同时接受 YAML 字符串和字符串列表。
+type StringList []string
+
+func (s *StringList) UnmarshalYAML(value *yaml.Node) error {
+	// 单个字符串
+	if value.Kind == yaml.ScalarNode {
+		*s = StringList{value.Value}
+		return nil
+	}
+	// 字符串列表
+	var list []string
+	if err := value.Decode(&list); err != nil {
+		return err
+	}
+	*s = list
+	return nil
 }
 
 // ShouldRun 判断本轮是否应该执行这个 Pipeline。

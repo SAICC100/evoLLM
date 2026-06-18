@@ -108,8 +108,11 @@ func (r *Runner) runPlugin(ctx context.Context, step pipeline.Step, ws *state.Wo
 		return nil, fmt.Errorf("解析 plugin 输出失败: %w", err)
 	}
 
+	if stderr.Len() > 0 {
+		r.logger.Info("Plugin stderr", "plugin", step.Plugin, "stderr", stderr.String()[:min(stderr.Len(), 500)])
+	}
 	for _, log := range result.Logs {
-		r.logger.Debug("plugin log", "plugin", step.Plugin, "msg", log)
+		r.logger.Info("plugin log", "plugin", step.Plugin, "msg", log)
 	}
 
 	r.logger.Info("Plugin 执行完成",

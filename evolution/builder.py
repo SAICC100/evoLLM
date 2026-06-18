@@ -9,11 +9,48 @@ Builder - 把 Proposer 的假设翻译成可执行的代码或 Prompt 文件。
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from base import AgentBase, WORKSPACE, LIVE
 
 logger = logging.getLogger("builder")
+
+
+def _extract_code(content: str) -> str:
+    """
+    从 LLM 输出中提取 Python 代码。
+    兼容各种格式：```python、```Python、```、无代码块。
+    """
+    # 尝试各种代码块格式
+    for pattern in [
+        r"```python\s*(.*?)```",   # 标准格式
+        r"```Python\s*(.*?)```",   # 大写
+        r"```py\s*(.*?)```",       # 缩写
+        r"```\s*(.*?)```",         # 无语言标注
+    ]:
+        m = re.search(pattern, content, re.DOTALL)
+        if m:
+            code = m.group(1).strip()
+            # 排除空块或纯说明文字（必须含 def 或 import）
+            if "def " in code or "import " in code:
+                return code
+
+    # 无代码块：整体当作代码，去掉明显的说明行
+    lines = content.strip().splitlines()
+    code_lines = []
+    for line in lines:
+        stripped = line.strip()
+        # 跳过看起来是说明文字的行（中文开头、非代码）
+        if stripped and not stripped.startswith("#") and \
+           any(c in stripped for c in ["def ", "import ", "class ", "    ", "return", "if ", "for "]):
+            code_lines = lines  # 整体保留
+            break
+        elif stripped.startswith(("import ", "from ", "def ", "class ", "#")):
+            code_lines = lines
+            break
+
+    return "\n".join(code_lines).strip() if code_lines else content.strip()
 
 PLUGIN_SYSTEM_PROMPT = """你是一个 Python 函数生成器，专门编写 evo-core 的 Plugin 文件。
 
@@ -109,17 +146,27 @@ class Builder(AgentBase):
 请生成完整的 Plugin 文件。"""}
         ], temperature=0.3)
 
-        # 提取代码块
-        import re
-        m = re.search(r"```python\s*(.*?)```", content, re.DOTALL)
-        code = m.group(1).strip() if m else content.strip()
+        code = _extract_code(content)
 
-        # 基础语法检查
+        # 语法检查失败则重试一次，要求更严格的格式
         try:
             compile(code, prop["target_file"], "exec")
         except SyntaxError as e:
-            logger.error(f"生成的 Plugin 语法错误: {e}")
-            return False
+            logger.warning(f"第一次生成语法错误({e})，重试...")
+            retry = self.llm([
+                {"role": "system", "content": PLUGIN_SYSTEM_PROMPT},
+                {"role": "user", "content": f"""上次生成的代码有语法错误：{e}
+请重新生成，只输出纯 Python 代码，用```python 和 ``` 包裹，不要任何说明文字。
+
+目标文件：{prop['target_file']}
+改进思路：{prop['hypothesis']}"""}
+            ], temperature=0.1)
+            code = _extract_code(retry)
+            try:
+                compile(code, prop["target_file"], "exec")
+            except SyntaxError as e2:
+                logger.error(f"重试后仍有语法错误: {e2}")
+                return False
 
         self.write_file(staging_path, code)
         return True
@@ -171,11 +218,13 @@ steps:
         self.write_file(staging_path, yaml_content)
         return True
 
-    def run_pending(self) -> int:
-        """处理所有 pending 状态的提案。"""
+    def run_pending(self, max_count: int = 0) -> int:
+        """处理 pending 状态的提案，max_count=0 表示全部处理。"""
         proposals_dir = WORKSPACE / "proposals"
         count = 0
-        for f in proposals_dir.glob("prop_*.json"):
+        for f in sorted(proposals_dir.glob("prop_*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
+            if max_count and count >= max_count:
+                break
             prop = self.read_json(f)
             if prop.get("status") == "pending":
                 if self.run(prop["id"]):

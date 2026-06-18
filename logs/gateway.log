@@ -1,0 +1,8 @@
+2026-06-18 09:42:43,021 INFO LLM Gateway 启动，端口 7000，模型 deepseek-v3.2
+ * Serving Flask app 'gateway'
+ * Debug mode: off
+2026-06-18 09:42:48,041 INFO [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:7000
+ * Running on http://10.222.64.52:7000
+2026-06-18 09:42:48,041 INFO [33mPress CTRL+C to quit[0m

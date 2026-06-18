@@ -30,9 +30,9 @@ class Analyst(AgentBase):
         summary = self.read_json(summary_path)
         goal = self.load_goal()
 
-        # 收集最近 10 轮的 gaps，了解哪些问题是持续性的
+        # 收集最近 3 轮的 gaps（不多传，避免超 token）
         recent_gaps = []
-        for i in range(max(0, tick - 10), tick):
+        for i in range(max(0, tick - 3), tick):
             p = WORKSPACE / "gaps" / f"tick_{i:06d}.json"
             if p.exists():
                 recent_gaps.append(self.read_json(p))

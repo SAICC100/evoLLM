@@ -167,6 +167,11 @@ def run(context: dict) -> dict:
         包含变更和日志的字典
     """
     try:
+        # 已初始化过则跳过（npcs 存在即视为已初始化）
+        data = context.get("data", {})
+        if data.get("npcs"):
+            return {"changes": [], "logs": ["world already initialized, skipping"]}
+
         # 获取世界配置
         world_config = context.get('world_config', {})
         
@@ -176,22 +181,16 @@ def run(context: dict) -> dict:
         # 生成初始状态
         world_map, tribes, npcs = initializer.generate_initial_state(world_config)
         
-        # 准备变更列表
+        # 准备变更列表（用顶层 key，world 作为整体写入）
         changes = [
             {
-                "path": "world.map",
+                "path": "world",
                 "op": "set",
-                "value": world_map
-            },
-            {
-                "path": "world.current_tick",
-                "op": "set",
-                "value": 0
-            },
-            {
-                "path": "world.current_season",
-                "op": "set",
-                "value": "spring"
+                "value": {
+                    "map": world_map,
+                    "current_tick": 0,
+                    "current_season": "spring"
+                }
             },
             {
                 "path": "tribes",

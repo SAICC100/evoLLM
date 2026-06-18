@@ -81,6 +81,16 @@ type Kernel struct {
 }
 
 func (k *Kernel) RunOneTick(ctx context.Context) {
+	// DB 健康检查：若不健康则尝试重新初始化
+	if !k.store.IsHealthy() {
+		slog.Warn("DB 不健康，尝试重新初始化...")
+		if err := k.store.Reinit(); err != nil {
+			slog.Error("DB 重新初始化失败，跳过本轮", "error", err)
+			return
+		}
+		slog.Info("DB 重新初始化成功")
+	}
+
 	tick := k.store.NextTick()
 	slog.Info("开始执行", "tick", tick)
 
