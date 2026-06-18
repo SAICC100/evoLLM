@@ -1,9 +1,13 @@
+#!/usr/bin/env python3
+"""npc_daily_actions: NPC每日行动，包含社交互动和状态影响"""
 import json
 import sys
+import random
 from typing import Dict, List, Any
 
 # 常量定义
 ACTIONS = ["hunting", "farming", "patrol", "trade", "rest"]
+SOCIAL_ACTIONS = ["conversation", "cooperation", "argument", "gift_exchange", "shared_meal"]
 OCCUPATION_ACTION_WEIGHTS = {
     "warrior": {"hunting": 0.4, "patrol": 0.4, "rest": 0.2},
     "farmer": {"farming": 0.6, "hunting": 0.2, "rest": 0.2},
@@ -22,6 +26,12 @@ SEASON_MODIFIERS = {
     "autumn": {"farming": 1.1, "hunting": 1.3, "patrol": 1.0, "trade": 1.2, "rest": 0.9},
     "winter": {"farming": 0.5, "hunting": 0.8, "patrol": 0.7, "trade": 0.9, "rest": 1.3}
 }
+SOCIAL_SEASON_MODIFIERS = {
+    "spring": 1.2,  # 春天社交更活跃
+    "summer": 1.1,
+    "autumn": 1.0,
+    "winter": 0.8   # 冬天社交减少
+}
 TRIBE_NAMES = {
     "1": "铁爪",
     "2": "银月", 
@@ -33,6 +43,13 @@ ACTION_RESULTS = {
     "patrol": {"energy_delta": -25, "gold_delta": 5, "success_rate": 0.9},
     "trade": {"energy_delta": -10, "gold_delta": 20, "success_rate": 0.6},
     "rest": {"energy_delta": 30, "gold_delta": -5, "success_rate": 1.0}
+}
+SOCIAL_EFFECTS = {
+    "conversation": {"mood_delta": 1, "social_energy_delta": 2, "description": "进行了愉快的交谈"},
+    "cooperation": {"mood_delta": 2, "social_energy_delta": 3, "description": "合作完成了某项工作"},
+    "argument": {"mood_delta": -1, "social_energy_delta": -1, "description": "发生了一些小争执"},
+    "gift_exchange": {"mood_delta": 3, "social_energy_delta": 4, "description": "交换了小礼物"},
+    "shared_meal": {"mood_delta": 2, "social_energy_delta": 3, "description": "共享了食物和故事"}
 }
 
 def select_action(occupation: str, health: str, season: str) -> str:
@@ -53,165 +70,284 @@ def select_action(occupation: str, health: str, season: str) -> str:
         
         # 季节调整
         if season in SEASON_MODIFIERS:
-            for action, modifier in SEASON_MODIFIERS[season].items():
-                if action in base_weights:
-                    base_weights[action] *= modifier
+            for action in base_weights:
+                if base_weights[action] > 0 and action in SEASON_MODIFIERS[season]:
+                    base_weights[action] *= SEASON_MODIFIERS[season][action]
+        
+        # 归一化并选择
+        total = sum(base_weights.values())
+        if total <= 0:
+            return "rest"
+        
+        rand_val = random.random() * total
+        cumulative = 0
+        for action, weight in base_weights.items():
+            cumulative += weight
+            if rand_val <= cumulative:
+                return action
+        
+        return "rest"
+    except Exception:
+        return "rest"
+
+def select_social_action(season: str) -> str:
+    """根据季节选择社交互动类型"""
+    try:
+        weights = {
+            "conversation": 0.3,
+            "cooperation": 0.25,
+            "argument": 0.1,
+            "gift_exchange": 0.2,
+            "shared_meal": 0.15
+        }
+        
+        # 季节调整
+        season_mod = SOCIAL_SEASON_MODIFIERS.get(season, 1.0)
+        if season == "winter":
+            weights["shared_meal"] *= 1.5  # 冬天更多共享食物
+        elif season == "spring":
+            weights["conversation"] *= 1.3  # 春天更多交谈
         
         # 归一化
-        total = sum(base_weights.values())
-        if total > 0:
-            normalized = {k: v/total for k, v in base_weights.items()}
-        else:
-            normalized = {action: 1.0/len(ACTIONS) for action in ACTIONS}
+        total = sum(weights.values())
+        rand_val = random.random() * total
+        cumulative = 0
+        for action, weight in weights.items():
+            cumulative += weight
+            if rand_val <= cumulative:
+                return action
         
-        # 根据权重随机选择（这里使用确定性选择：选择权重最高的）
-        selected = max(normalized.items(), key=lambda x: x[1])[0]
-        return selected
-        
-    except Exception as e:
-        return "rest"  # 默认休息
+        return "conversation"
+    except Exception:
+        return "conversation"
 
-def process_npc_action(npc: Dict[str, Any], season: str, tribe_name: str) -> Dict[str, Any]:
-    """处理单个NPC的行动"""
+def find_social_partner(npc_id: str, npc_tribe: str, npcs: List[Dict[str, Any]]) -> str:
+    """为NPC寻找社交伙伴"""
     try:
-        # 选择行动
-        action = select_action(npc.get("occupation", "farmer"), 
-                              npc.get("health", "healthy"), 
-                              season)
+        # 优先同部落的NPC
+        same_tribe_npcs = [n for n in npcs if n.get("tribe") == npc_tribe and n.get("id") != npc_id]
         
-        # 获取行动结果
-        action_info = ACTION_RESULTS.get(action, ACTION_RESULTS["rest"])
+        if same_tribe_npcs:
+            # 有一定概率选择不同部落的NPC（促进部落间交流）
+            if random.random() < 0.2 and len(npcs) > len(same_tribe_npcs) + 1:
+                other_tribe_npcs = [n for n in npcs if n.get("tribe") != npc_tribe and n.get("id") != npc_id]
+                if other_tribe_npcs:
+                    return random.choice(other_tribe_npcs)["id"]
+            
+            return random.choice(same_tribe_npcs)["id"]
         
-        # 计算实际结果（考虑成功率）
-        import random
-        success = random.random() < action_info["success_rate"]
+        # 如果没有同部落的，选择任意其他NPC
+        other_npcs = [n for n in npcs if n.get("id") != npc_id]
+        if other_npcs:
+            return random.choice(other_npcs)["id"]
         
-        # 计算能量和金钱变化
-        energy_delta = action_info["energy_delta"]
-        gold_delta = action_info["gold_delta"] if success else gold_delta // 2
+        return ""
+    except Exception:
+        return ""
+
+def calculate_population_vitality(npcs: List[Dict[str, Any]]) -> int:
+    """计算人口活力值"""
+    try:
+        vitality = 0
         
-        # 确保能量不会超过上限或低于0
-        new_energy = max(0, min(100, npc.get("energy", 50) + energy_delta))
-        actual_energy_delta = new_energy - npc.get("energy", 50)
+        for npc in npcs:
+            if not isinstance(npc, dict):
+                continue
+            
+            # 心情贡献
+            mood = npc.get("mood", 50)
+            if mood > 60:
+                vitality += 1
+            elif mood > 70:
+                vitality += 2
+            elif mood > 80:
+                vitality += 3
+            
+            # 社交能量贡献
+            social_energy = npc.get("social_energy", 0)
+            if social_energy > 5:
+                vitality += 1
+            if social_energy > 10:
+                vitality += 1
+            
+            # 年龄多样性贡献（年轻和年长者都有）
+            age = npc.get("age", 30)
+            if 18 <= age <= 30 or age >= 60:
+                vitality += 1
         
-        # 确保金钱不会低于0
-        new_gold = max(0, npc.get("gold", 0) + gold_delta)
-        actual_gold_delta = new_gold - npc.get("gold", 0)
-        
-        # 生成事件描述
-        success_text = "成功" if success else "失败"
-        action_descriptions = {
-            "hunting": f"{tribe_name}部落的{npc.get('name')}外出狩猎，{success_text}获得了一些猎物",
-            "farming": f"{tribe_name}部落的{npc.get('name')}在田间劳作，{success_text}收获了一些作物",
-            "patrol": f"{tribe_name}部落的{npc.get('name')}执行巡逻任务，{success_text}维护了部落安全",
-            "trade": f"{tribe_name}部落的{npc.get('name')}进行贸易活动，{success_text}获得了一些利润",
-            "rest": f"{tribe_name}部落的{npc.get('name')}在休息恢复体力"
-        }
-        
-        event_desc = action_descriptions.get(action, f"{npc.get('name')}进行了{action}活动")
-        
-        return {
-            "npc_id": npc.get("id"),
-            "action": action,
-            "energy_delta": actual_energy_delta,
-            "gold_delta": actual_gold_delta,
-            "event_description": event_desc,
-            "success": success
-        }
-        
-    except Exception as e:
-        # 出错时返回安全的默认值
-        return {
-            "npc_id": npc.get("id"),
-            "action": "rest",
-            "energy_delta": 10,
-            "gold_delta": 0,
-            "event_description": f"{npc.get('name', 'NPC')}在休息中",
-            "success": True
-        }
+        return vitality
+    except Exception:
+        return 0
 
 def run(context: dict) -> dict:
-    """主函数：处理所有NPC的每日行动"""
-    changes = []
-    logs = []
-    
+    """执行NPC每日行动，包含社交互动"""
     try:
-        # 从context中获取数据
-        npcs = context.get("data", {}).get("npcs", [])
-        season = context.get("data", {}).get("world", {}).get("season", "spring")
-        tribes = context.get("data", {}).get("tribes", [])
+        data = context.get("data", {})
+        npcs = data.get("npcs", [])
+        tribes = data.get("tribes", [])
+        world = data.get("world", {})
         
-        logs.append(f"开始处理 {len(npcs)} 个NPC的每日行动，当前季节：{season}")
+        season = world.get("current_season", "spring")
+        changes = []
+        logs = []
         
-        # 创建部落ID到名称的映射
-        tribe_map = {}
-        for tribe in tribes:
-            tribe_map[str(tribe.get("id"))] = tribe.get("name", "未知部落")
-        
-        # 处理每个NPC
+        # 确保每个NPC都有社交状态
         for npc in npcs:
-            try:
-                tribe_id = str(npc.get("tribe_id", "1"))
-                tribe_name = tribe_map.get(tribe_id, TRIBE_NAMES.get(tribe_id, "铁爪"))
-                
-                result = process_npc_action(npc, season, tribe_name)
-                
-                # 添加能量变化
-                changes.append({
-                    "path": f"npcs.{npc.get('id')}.energy",
-                    "op": "add",
-                    "value": result["energy_delta"]
-                })
-                
-                # 添加金钱变化
-                changes.append({
-                    "path": f"npcs.{npc.get('id')}.gold",
-                    "op": "add",
-                    "value": result["gold_delta"]
-                })
-                
-                # 添加事件记录
-                changes.append({
-                    "path": "world.events",
-                    "op": "append",
-                    "value": {
-                        "type": "npc_action",
-                        "description": result["event_description"],
-                        "npc_id": result["npc_id"],
-                        "action": result["action"],
-                        "season": season,
-                        "timestamp": "daily"
-                    }
-                })
-                
-                logs.append(f"NPC {npc.get('name')} 执行 {result['action']}，能量变化：{result['energy_delta']}，金钱变化：{result['gold_delta']}")
-                
-            except Exception as e:
-                logs.append(f"处理NPC {npc.get('id', '未知')} 时出错：{str(e)}")
+            if not isinstance(npc, dict):
                 continue
+            
+            npc_id = npc.get("id", "")
+            if not npc_id:
+                continue
+            
+            # 初始化社交状态（如果不存在）
+            if "mood" not in npc:
+                changes.append({
+                    "path": f"npcs[id={npc_id}].mood",
+                    "op": "set",
+                    "value": 50
+                })
+            
+            if "social_energy" not in npc:
+                changes.append({
+                    "path": f"npcs[id={npc_id}].social_energy",
+                    "op": "set",
+                    "value": 0
+                })
         
-        logs.append(f"处理完成，生成 {len(changes)//3} 个NPC的行动记录")
+        # 处理每个NPC的日常行动
+        for npc in npcs:
+            if not isinstance(npc, dict):
+                continue
+            
+            npc_id = npc.get("id", "")
+            name = npc.get("name", "无名者")
+            occupation = npc.get("occupation", "farmer")
+            health_status = npc.get("health_status", "healthy")
+            tribe_id = npc.get("tribe", "1")
+            tribe_name = TRIBE_NAMES.get(tribe_id, f"部落{tribe_id}")
+            
+            if not npc_id:
+                continue
+            
+            # 1. 选择主要行动
+            main_action = select_action(occupation, health_status, season)
+            action_result = ACTION_RESULTS.get(main_action, ACTION_RESULTS["rest"])
+            
+            # 2. 执行主要行动
+            success = random.random() < action_result["success_rate"]
+            
+            if success:
+                energy_delta = action_result["energy_delta"]
+                gold_delta = action_result["gold_delta"]
+                
+                changes.append({
+                    "path": f"npcs[id={npc_id}].energy",
+                    "op": "add",
+                    "value": energy_delta
+                })
+                
+                changes.append({
+                    "path": f"npcs[id={npc_id}].gold",
+                    "op": "add",
+                    "value": gold_delta
+                })
+                
+                # 3. 社交互动（每天都有社交机会）
+                social_action = select_social_action(season)
+                partner_id = find_social_partner(npc_id, tribe_id, npcs)
+                
+                if partner_id:
+                    # 找到社交效果
+                    social_effect = SOCIAL_EFFECTS.get(social_action, SOCIAL_EFFECTS["conversation"])
+                    
+                    # 应用社交效果给发起者
+                    changes.append({
+                        "path": f"npcs[id={npc_id}].mood",
+                        "op": "add",
+                        "value": social_effect["mood_delta"]
+                    })
+                    
+                    changes.append({
+                        "path": f"npcs[id={npc_id}].social_energy",
+                        "op": "add",
+                        "value": social_effect["social_energy_delta"]
+                    })
+                    
+                    # 应用社交效果给参与者（效果减半）
+                    changes.append({
+                        "path": f"npcs[id={partner_id}].mood",
+                        "op": "add",
+                        "value": social_effect["mood_delta"] // 2 if social_effect["mood_delta"] != 0 else 0
+                    })
+                    
+                    changes.append({
+                        "path": f"npcs[id={partner_id}].social_energy",
+                        "op": "add",
+                        "value": social_effect["social_energy_delta"] // 2
+                    })
+                    
+                    # 记录社交日志
+                    partner_npc = next((n for n in npcs if n.get("id") == partner_id), {})
+                    partner_name = partner_npc.get("name", "某人")
+                    partner_tribe_id = partner_npc.get("tribe", "1")
+                    partner_tribe_name = TRIBE_NAMES.get(partner_tribe_id, f"部落{partner_tribe_id}")
+                    
+                    social_log = f"{name}({tribe_name})与{partner_name}({partner_tribe_name})"
+                    social_log += f"{social_effect['description']}"
+                    
+                    if social_effect["mood_delta"] > 0:
+                        social_log += f"，心情+{social_effect['mood_delta']}"
+                    elif social_effect["mood_delta"] < 0:
+                        social_log += f"，心情{social_effect['mood_delta']}"
+                    
+                    logs.append(social_log)
+                
+                # 记录主要行动日志
+                action_log = f"{name}({tribe_name})进行{main_action}"
+                if gold_delta > 0:
+                    action_log += f"，获得{gold_delta}金币"
+                elif gold_delta < 0:
+                    action_log += f"，花费{-gold_delta}金币"
+                
+                if energy_delta > 0:
+                    action_log += f"，恢复{energy_delta}精力"
+                elif energy_delta < 0:
+                    action_log += f"，消耗{-energy_delta}精力"
+                
+                logs.append(action_log)
+            else:
+                # 行动失败
+                logs.append(f"{name}({tribe_name})进行{main_action}失败")
         
-    except Exception as e:
-        logs.append(f"主处理过程出错：{str(e)}")
+        # 4. 更新人口活力值
+        current_vitality = calculate_population_vitality(npcs)
+        changes.append({
+            "path": "world.population_vitality",
+            "op": "set",
+            "value": current_vitality
+        })
+        
+        # 5. 添加活力变化日志
+        logs.append(f"人口活力值更新为: {current_vitality}")
+        
+        # 限制日志数量
+        if len(logs) > 10:
+            logs = logs[:10]
+        
+        return {"changes": changes, "logs": logs}
     
-    return {"changes": changes, "logs": logs}
+    except Exception as e:
+        # 捕获所有异常，避免插件崩溃
+        error_msg = f"npc_daily_actions插件错误: {str(e)}"
+        return {"changes": [], "logs": [error_msg]}
 
 if __name__ == "__main__":
     try:
-        # 从标准输入读取JSON
         input_data = json.loads(sys.stdin.read())
-        
-        # 执行主函数
-        result = run(input_data)
-        
-        # 输出结果到标准输出
-        print(json.dumps(result, ensure_ascii=False))
-        
+        context = input_data.get("context", {})
+        result = run(context)
+        print(json.dumps(result))
     except Exception as e:
-        # 如果连输入输出都出错，返回基本错误信息
-        error_result = {
-            "changes": [],
-            "logs": [f"系统错误：{str(e)}"]
-        }
-        print(json.dumps(error_result, ensure_ascii=False))
+        error_result = {"changes": [], "logs": [f"插件执行错误: {str(e)}"]}
+        print(json.dumps(error_result))

@@ -87,8 +87,8 @@ def run_forever() -> None:
             if n_built:
                 logger.info(f"Builder 处理了 {n_built} 个提案")
 
-            # 5. Judge：评估所有 built 提案
-            stats = judge.run_all_built(tick)
+            # 5. Judge：评估所有已部署提案
+            stats = judge.run_all_deployed(tick)
             if any(v > 0 for v in stats.values()):
                 logger.info(f"Judge 结果: {stats}")
 

@@ -1,89 +1,85 @@
 """
 Builder - 把 Proposer 的假设翻译成可执行的代码或 Prompt 文件。
-写入 workspace/staging/，不直接写 live/。
 
-输入：workspace/proposals/prop_N.json（status=pending）
-输出：workspace/staging/{plugins|prompts|pipelines}/目标文件
-     同时更新 proposal 的 status=built
+流程：
+1. 生成代码 → 写入 staging/
+2. 备份 live/ 中的旧版本 → backup/
+3. 直接 deploy 到 live/（让 Core 立即执行新版本）
+4. 记录 deployed_tick，供 Judge 观察对比
+
+Judge 在观察期结束后：
+- 有效 → 删除 backup（保留新版本）
+- 无效 → 从 backup 恢复旧版本
 """
 from __future__ import annotations
 
 import logging
 import re
+import shutil
 from pathlib import Path
 
 from base import AgentBase, WORKSPACE, LIVE
 
 logger = logging.getLogger("builder")
 
-
-def _extract_code(content: str) -> str:
-    """
-    从 LLM 输出中提取 Python 代码。
-    兼容各种格式：```python、```Python、```、无代码块。
-    """
-    # 尝试各种代码块格式
-    for pattern in [
-        r"```python\s*(.*?)```",   # 标准格式
-        r"```Python\s*(.*?)```",   # 大写
-        r"```py\s*(.*?)```",       # 缩写
-        r"```\s*(.*?)```",         # 无语言标注
-    ]:
-        m = re.search(pattern, content, re.DOTALL)
-        if m:
-            code = m.group(1).strip()
-            # 排除空块或纯说明文字（必须含 def 或 import）
-            if "def " in code or "import " in code:
-                return code
-
-    # 无代码块：整体当作代码，去掉明显的说明行
-    lines = content.strip().splitlines()
-    code_lines = []
-    for line in lines:
-        stripped = line.strip()
-        # 跳过看起来是说明文字的行（中文开头、非代码）
-        if stripped and not stripped.startswith("#") and \
-           any(c in stripped for c in ["def ", "import ", "class ", "    ", "return", "if ", "for "]):
-            code_lines = lines  # 整体保留
-            break
-        elif stripped.startswith(("import ", "from ", "def ", "class ", "#")):
-            code_lines = lines
-            break
-
-    return "\n".join(code_lines).strip() if code_lines else content.strip()
+BACKUP_DIR = LIVE / "backup"
 
 PLUGIN_SYSTEM_PROMPT = """你是一个 Python 函数生成器，专门编写 evo-core 的 Plugin 文件。
 
 Plugin 规范：
 - 文件顶部有 docstring 说明功能
 - 包含 run(context: dict) -> dict 函数
-- context 是只读的世界状态快照
+- context["data"] 是只读的世界状态，包含 npcs（列表）、tribes（列表）、world（dict）
 - 返回 {"changes": [...], "logs": [...]}
-- changes 格式：{"path": "key", "op": "set|add|append|remove", "value": ...}
-- 不能有网络调用、文件 IO、全局状态
-- 在 __main__ 中读取 stdin，调用 run()，输出 stdout
+- changes 元素格式：{"path": str, "op": "set|add|append|remove", "value": any}
+- 更新单个 NPC 属性的 path 格式：npcs[id=npc_001].health
+- 在 __main__ 中读取 stdin JSON，调用 run()，print stdout JSON
+- 不能有网络调用、文件 IO、全局可变状态
+- 所有异常 try/except 捕获，写入 logs，不抛出
 
-示例 Plugin：
+示例 Plugin（NPC健康衰减）：
 ```python
 #!/usr/bin/env python3
 \"\"\"health_decay: NPC 每日健康衰减\"\"\"
-import sys, json
+import sys, json, random
 
 def run(context: dict) -> dict:
-    npc = context.get("data", {}).get("npc", {})
-    age = npc.get("age", 20)
-    decay = 2 if age > 60 else 1
-    return {
-        "changes": [{"path": "npc.health", "op": "add", "value": -decay}],
-        "logs": [f"health -{decay}"]
-    }
+    data = context.get("data", {})
+    npcs = data.get("npcs", [])
+    season = data.get("world", {}).get("current_season", "spring")
+    changes, logs = [], []
+    for npc in npcs:
+        if not isinstance(npc, dict): continue
+        npc_id = npc.get("id", "")
+        age = npc.get("age", 20)
+        decay = 2 if age > 60 else 1
+        if season == "winter": decay *= 2
+        changes.append({"path": f"npcs[id={npc_id}].health", "op": "add", "value": -decay})
+        logs.append(f"{npc.get('name','?')} health -{decay}")
+    return {"changes": changes, "logs": logs[:5]}
 
 if __name__ == "__main__":
     data = json.loads(sys.stdin.read())
     print(json.dumps(run(data["context"])))
 ```
 
-只输出完整的 Python 文件内容，不要有额外解释。"""
+只输出完整的 Python 文件，用```python 包裹。"""
+
+
+def _extract_code(content: str) -> str:
+    """从 LLM 输出中提取 Python 代码，兼容多种格式。"""
+    for pattern in [
+        r"```python\s*(.*?)```",
+        r"```Python\s*(.*?)```",
+        r"```py\s*(.*?)```",
+        r"```\s*(.*?)```",
+    ]:
+        m = re.search(pattern, content, re.DOTALL)
+        if m:
+            code = m.group(1).strip()
+            if "def " in code or "import " in code:
+                return code
+    return content.strip()
 
 
 class Builder(AgentBase):
@@ -101,7 +97,6 @@ class Builder(AgentBase):
 
         change_type = prop["change_type"]
         target_file = prop["target_file"]
-        hypothesis = prop["hypothesis"]
 
         try:
             if change_type == "plugin":
@@ -115,30 +110,53 @@ class Builder(AgentBase):
                 return False
 
             if success:
-                prop["status"] = "built"
-                prop["staging_path"] = str(
-                    WORKSPACE / "staging" / f"{change_type}s" / target_file
-                )
+                # 部署：备份旧版本 → deploy 到 live
+                deployed_tick = self._deploy(change_type, target_file)
+                prop["status"] = "deployed"
+                prop["deployed_tick"] = deployed_tick
+                prop["live_path"] = str(LIVE / f"{change_type}s" / target_file)
+                prop["backup_path"] = str(BACKUP_DIR / f"{change_type}s" / target_file)
                 self.write_json(prop_path, prop)
-                logger.info(f"Builder 完成: {proposal_id} -> {target_file}")
+                logger.info(f"Builder deployed: {proposal_id} -> live/{change_type}s/{target_file} (tick={deployed_tick})")
             return success
 
         except Exception as e:
             logger.error(f"Builder 失败 {proposal_id}: {e}")
             return False
 
+    def _deploy(self, change_type: str, target_file: str) -> int:
+        """备份旧版本，把 staging 文件 deploy 到 live。返回当前 tick。"""
+        staging_path = WORKSPACE / "staging" / f"{change_type}s" / target_file
+        live_path = LIVE / f"{change_type}s" / target_file
+        backup_path = BACKUP_DIR / f"{change_type}s" / target_file
+
+        # 备份旧版本
+        if live_path.exists():
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(live_path, backup_path)
+
+        # Deploy
+        live_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(staging_path, live_path)
+        staging_path.unlink(missing_ok=True)
+
+        # 获取当前 tick（从最新快照推断）
+        obs_dir = WORKSPACE / "observations"
+        files = sorted(obs_dir.glob("tick_*.json"), reverse=True)
+        return int(files[0].stem.replace("tick_", "")) if files else 0
+
     def _build_plugin(self, prop: dict) -> bool:
-        # 读取已有的同名 Plugin 作为参考
+        staging_path = WORKSPACE / "staging" / "plugins" / prop["target_file"]
+
+        # 读取当前 live 版本作为参考
         existing = ""
         live_path = LIVE / "plugins" / prop["target_file"]
-        staging_path = WORKSPACE / "staging" / "plugins" / prop["target_file"]
         if live_path.exists():
-            existing = f"\n现有代码供参考（需要在此基础上改进）：\n```python\n{live_path.read_text()}\n```"
+            existing = f"\n当前版本（需要在此基础上改进）：\n```python\n{live_path.read_text()[:2000]}\n```"
 
         content = self.llm([
             {"role": "system", "content": PLUGIN_SYSTEM_PROMPT},
-            {"role": "user", "content": f"""
-目标文件：{prop['target_file']}
+            {"role": "user", "content": f"""目标文件：{prop['target_file']}
 改进思路：{prop['hypothesis']}
 预期效果：{prop['expected_improvement']}
 {existing}
@@ -148,7 +166,6 @@ class Builder(AgentBase):
 
         code = _extract_code(content)
 
-        # 语法检查失败则重试一次，要求更严格的格式
         try:
             compile(code, prop["target_file"], "exec")
         except SyntaxError as e:
@@ -156,7 +173,7 @@ class Builder(AgentBase):
             retry = self.llm([
                 {"role": "system", "content": PLUGIN_SYSTEM_PROMPT},
                 {"role": "user", "content": f"""上次生成的代码有语法错误：{e}
-请重新生成，只输出纯 Python 代码，用```python 和 ``` 包裹，不要任何说明文字。
+请重新生成，只输出纯 Python 代码，用```python 和 ``` 包裹，不要任何说明。
 
 目标文件：{prop['target_file']}
 改进思路：{prop['hypothesis']}"""}
@@ -172,18 +189,17 @@ class Builder(AgentBase):
         return True
 
     def _build_prompt(self, prop: dict) -> bool:
+        staging_path = WORKSPACE / "staging" / "prompts" / prop["target_file"]
         existing = ""
         live_path = LIVE / "prompts" / prop["target_file"]
-        staging_path = WORKSPACE / "staging" / "prompts" / prop["target_file"]
         if live_path.exists():
             existing = f"\n现有 Prompt：\n{live_path.read_text()}"
 
         content = self.llm([{"role": "user", "content": f"""
-请生成一个 Prompt 文件（纯文本，供 LLM 调用时使用）。
+生成一个 Prompt 文件（纯文本，供 LLM 调用时使用）。
 目标文件：{prop['target_file']}
 改进思路：{prop['hypothesis']}
 {existing}
-
 只输出 Prompt 文本内容，不要任何包装。"""}], temperature=0.5)
 
         self.write_file(staging_path, content.strip())
@@ -194,7 +210,7 @@ class Builder(AgentBase):
         staging_path = WORKSPACE / "staging" / "pipelines" / prop["target_file"]
 
         content = self.llm([{"role": "user", "content": f"""
-请生成一个 Pipeline YAML 文件，定义 Plugin 的执行顺序。
+生成一个 Pipeline YAML 文件，定义 Plugin 的执行顺序。
 目标文件：{prop['target_file']}
 改进思路：{prop['hypothesis']}
 当前可用 Plugin：{live_plugins}
@@ -206,15 +222,11 @@ steps:
   - plugin: plugin_name
   - plugin: another_plugin
     after: plugin_name
-    condition: "some.condition"
 ```
-
 只输出 YAML 内容。"""}], temperature=0.3)
 
-        import re
         m = re.search(r"```yaml\s*(.*?)```", content, re.DOTALL)
         yaml_content = m.group(1).strip() if m else content.strip()
-
         self.write_file(staging_path, yaml_content)
         return True
 
@@ -222,7 +234,8 @@ steps:
         """处理 pending 状态的提案，max_count=0 表示全部处理。"""
         proposals_dir = WORKSPACE / "proposals"
         count = 0
-        for f in sorted(proposals_dir.glob("prop_*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
+        for f in sorted(proposals_dir.glob("prop_*.json"),
+                        key=lambda x: x.stat().st_mtime, reverse=True):
             if max_count and count >= max_count:
                 break
             prop = self.read_json(f)

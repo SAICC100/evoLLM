@@ -1,7 +1,15 @@
-2026-06-18 09:50:05,733 evo-scheduler INFO 进化层调度器启动（跳过积压模式，skip_ratio=10）
-2026-06-18 09:50:05,734 evo-scheduler INFO 跳过积压 5646 个 tick，直接处理最新 tick=5647
-2026-06-18 09:50:05,734 evo-scheduler INFO ── 处理 tick=5647 ──
-2026-06-18 09:50:10,632 httpx        INFO HTTP Request: POST http://wbaigcproxy.search.weibo.com:9029/v1/chat/completions "HTTP/1.1 200 OK"
-2026-06-18 09:50:10,642 observer     INFO Observer 完成 tick=5647, events={}
-2026-06-18 09:50:22,102 httpx        INFO HTTP Request: POST http://wbaigcproxy.search.weibo.com:9029/v1/chat/completions "HTTP/1.1 200 OK"
-2026-06-18 09:50:22,104 analyst      INFO Analyst 完成 tick=5647, score=1.0
+2026-06-18 10:09:49,009 evo-scheduler INFO 进化层调度器启动（跳过积压模式，skip_ratio=10）
+2026-06-18 10:09:49,010 evo-scheduler INFO 跳过积压 5646 个 tick，直接处理最新 tick=5647
+2026-06-18 10:09:49,010 evo-scheduler INFO ── 处理 tick=5647 ──
+2026-06-18 10:09:53,421 httpx        INFO HTTP Request: POST http://wbaigcproxy.search.weibo.com:9029/v1/chat/completions "HTTP/1.1 200 OK"
+2026-06-18 10:09:53,429 observer     ERROR Observer 失败: 'list' object has no attribute 'get'
+2026-06-18 10:10:04,324 httpx        INFO HTTP Request: POST http://wbaigcproxy.search.weibo.com:9029/v1/chat/completions "HTTP/1.1 200 OK"
+2026-06-18 10:10:04,327 analyst      INFO Analyst 完成 tick=5647, score=0.0
+2026-06-18 10:12:03,580 httpx        INFO HTTP Request: POST http://wbaigcproxy.search.weibo.com:9029/v1/chat/completions "HTTP/1.1 200 OK"
+2026-06-18 10:12:03,599 builder      INFO Builder deployed: prop_3e818575 -> live/plugins/npc_daily_actions.py (tick=5647)
+2026-06-18 10:13:12,442 httpx        INFO HTTP Request: POST http://wbaigcproxy.search.weibo.com:9029/v1/chat/completions "HTTP/1.1 200 OK"
+2026-06-18 10:13:12,450 builder      INFO Builder deployed: prop_d73e90c1 -> live/plugins/npc_social_interaction.py (tick=5647)
+2026-06-18 10:14:17,218 httpx        INFO HTTP Request: POST http://wbaigcproxy.search.weibo.com:9029/v1/chat/completions "HTTP/1.1 200 OK"
+2026-06-18 10:14:17,227 builder      INFO Builder deployed: prop_b261b762 -> live/plugins/npc_fertility_and_birth.py (tick=5647)
+2026-06-18 10:14:17,228 evo-scheduler INFO Builder 处理了 3 个提案
+2026-06-18 10:14:17,253 evo-scheduler INFO Judge 结果: {'committed': 0, 'reverted': 0, 'waiting': 3}
